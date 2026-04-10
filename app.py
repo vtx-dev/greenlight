@@ -213,7 +213,9 @@ def create_request():
     desc = data.get("description") or ""
 
     # Notify via Telegram (caller can pass notify_telegram chat_id, falls back to configured default)
-    notify_telegram = str(data.get("notify_telegram") or TELEGRAM_CHAT_ID).strip()
+    # Passing notify_telegram="" explicitly suppresses notifications (useful for testing).
+    _nt = data.get("notify_telegram", TELEGRAM_CHAT_ID)  # absent → use default
+    notify_telegram = str(_nt).strip() if _nt is not None else ""
     if notify_telegram:
         threading.Thread(
             target=send_telegram_notification,

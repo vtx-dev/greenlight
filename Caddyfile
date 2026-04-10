@@ -1,0 +1,7 @@
+greenlightapi.dev, www.greenlightapi.dev {
+    reverse_proxy localhost:5000
+}
+
+agenttests.dev, www.agenttests.dev {
+    reverse_proxy localhost:6000
+}
