@@ -17,6 +17,7 @@ from functools import wraps
 from flask import Flask, request, jsonify, render_template_string, abort, redirect, send_from_directory
 
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024  # 2 MB max
 DB_PATH = "greenlight.db"
 BASE_URL = os.environ.get("BASE_URL", "https://greenlightapi.dev")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "6878450536")
@@ -141,7 +142,7 @@ def create_key():
     attempts.append(now)
     _reg_attempts[ip] = attempts
 
-    data = request.get_json(force=True)
+    data = request.get_json(silent=True) or {}
     name = (data.get("name") or "").strip()
     email = (data.get("email") or "").strip()
     if not name or not email:
@@ -162,7 +163,7 @@ def create_key():
 @require_api_key
 def create_request():
     """Agent submits an approval request."""
-    data = request.get_json(force=True)
+    data = request.get_json(silent=True) or {}
     title = (data.get("title") or "").strip()[:MAX_TITLE_LEN]
     if not title:
         return jsonify({"error": "title required"}), 400
@@ -376,7 +377,7 @@ def _is_safe_webhook_url(url: str) -> bool:
     import urllib.parse, ipaddress
     try:
         p = urllib.parse.urlparse(url)
-        if p.scheme not in ("https", "http"):
+        if p.scheme != "https":
             return False
         host = p.hostname or ""
         # Block GCP/AWS/Azure metadata endpoints and private ranges
