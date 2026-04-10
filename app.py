@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from functools import wraps
-from flask import Flask, request, jsonify, render_template_string, abort, redirect
+from flask import Flask, request, jsonify, render_template_string, abort, redirect, send_from_directory
 
 app = Flask(__name__)
 DB_PATH = "greenlight.db"
@@ -401,7 +401,23 @@ LANDING_PAGE = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Greenlight — Human-in-the-Loop for AI Agents</title>
+<title>Greenlight — Human-in-the-Loop Approval API for AI Agents</title>
+<meta name="description" content="Greenlight lets AI agents pause and request human approval before high-stakes actions. One API call. Framework-agnostic. Also ships as an MCP server.">
+<meta name="keywords" content="human in the loop, AI agents, approval API, MCP server, agent oversight, HITL">
+<link rel="canonical" href="https://greenlightapi.dev">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<!-- Open Graph -->
+<meta property="og:title" content="Greenlight — Human-in-the-Loop for AI Agents">
+<meta property="og:description" content="Let your agents ask before acting. One API call to pause and request human approval. Framework-agnostic, MCP-native.">
+<meta property="og:url" content="https://greenlightapi.dev">
+<meta property="og:type" content="website">
+<meta property="og:image" content="https://greenlightapi.dev/favicon.svg">
+<!-- Twitter -->
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Greenlight — Human-in-the-Loop for AI Agents">
+<meta name="twitter:description" content="Let your agents ask before acting. One API call to pause and request human approval.">
+<!-- JSON-LD -->
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Greenlight","url":"https://greenlightapi.dev","description":"Human-in-the-loop approval API for AI agents","applicationCategory":"DeveloperApplication","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0a0a0a; color: #e8e8e8; }
@@ -606,6 +622,13 @@ THANKS_PAGE = """<!DOCTYPE html>
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+
+@app.route("/favicon.ico")
+@app.route("/favicon.png")
+@app.route("/favicon.svg")
+def favicon():
+    return send_from_directory("static", "favicon.svg", mimetype="image/svg+xml")
+
 
 @app.route("/sitemap.xml")
 def sitemap():
