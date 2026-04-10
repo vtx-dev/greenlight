@@ -33,7 +33,7 @@ tracer = Tracer(
     traces_dir=str(Path(__file__).parent / "traces"),
     suite="greenlight-api",
     cloud_url=os.environ.get("AGENTTEST_CLOUD_URL", "https://agenttests.dev"),
-    cloud_api_key=os.environ.get("AGENTTEST_CLOUD_KEY", "REDACTED"),
+    cloud_api_key=os.environ.get("AGENTTEST_CLOUD_KEY", ""),
 )
 
 

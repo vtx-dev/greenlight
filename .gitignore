@@ -1,0 +1,7 @@
+*.db
+*.log
+__pycache__/
+*.pyc
+.env
+tests/traces/
+nohup.out
