@@ -20,9 +20,14 @@ from flask import Flask, request, jsonify, render_template_string, abort, redire
 
 app = Flask(__name__)
 DB_PATH = "greenlight.db"
+BASE_URL = os.environ.get("BASE_URL", "https://greenlightapi.dev")
 
 # Simple in-memory rate limit for key registration: {ip: [timestamps]}
 _reg_attempts: dict = {}
+
+MAX_TITLE_LEN = 200
+MAX_DESC_LEN = 2000
+MAX_COMMENT_LEN = 1000
 
 # ---------------------------------------------------------------------------
 # Database
@@ -101,7 +106,9 @@ def index():
 def create_key():
     """Register a new API key (free tier)."""
     # Rate limit: max 3 registrations per IP per hour
-    ip = request.remote_addr or "unknown"
+    # Use X-Forwarded-For only if set by Caddy (trusted proxy on 127.0.0.1)
+    ip = request.headers.get("X-Forwarded-For", request.remote_addr) if request.remote_addr == "127.0.0.1" else request.remote_addr or "unknown"
+    ip = ip.split(",")[0].strip()  # take first IP only
     now = time.time()
     attempts = [t for t in _reg_attempts.get(ip, []) if now - t < 3600]
     if len(attempts) >= 3:
@@ -131,15 +138,28 @@ def create_key():
 def create_request():
     """Agent submits an approval request."""
     data = request.get_json(force=True)
-    title = (data.get("title") or "").strip()
+    title = (data.get("title") or "").strip()[:MAX_TITLE_LEN]
     if not title:
         return jsonify({"error": "title required"}), 400
 
+    description = (data.get("description") or "")[:MAX_DESC_LEN]
+    options = data.get("options") or ["Approve", "Reject"]
+    # Validate options: list of non-empty strings, max 10
+    if not isinstance(options, list) or not options or len(options) > 10:
+        return jsonify({"error": "options must be a list of 1-10 strings"}), 400
+    options = [str(o)[:50] for o in options if str(o).strip()]
+
+    try:
+        expires_minutes = max(1, min(int(data.get("expires_minutes") or 60), 10080))  # cap at 1 week
+    except (TypeError, ValueError):
+        expires_minutes = 60
+
+    webhook_url = data.get("webhook_url") or ""
+    if webhook_url and not _is_safe_webhook_url(webhook_url):
+        return jsonify({"error": "webhook_url must be a public http/https URL"}), 400
+
     req_id = secrets.token_urlsafe(12)
     human_token = secrets.token_urlsafe(24)
-    options = data.get("options") or ["Approve", "Reject"]
-    expires_minutes = int(data.get("expires_minutes") or 60)
-    expires_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     row = request.api_key_row
     with get_db() as conn:
@@ -152,10 +172,10 @@ def create_request():
             req_id,
             row["key"],
             title,
-            data.get("description") or "",
+            description,
             json.dumps(data.get("context") or {}),
             json.dumps(options),
-            data.get("webhook_url") or "",
+            webhook_url,
             human_token,
             str(expires_minutes),
         ))
@@ -164,7 +184,7 @@ def create_request():
             (row["key"],)
         )
 
-    approval_url = f"{request.host_url}approve/{req_id}?token={human_token}"
+    approval_url = f"{BASE_URL}/approve/{req_id}?token={human_token}"
 
     # Fire notification in background
     threading.Thread(
@@ -177,7 +197,7 @@ def create_request():
         "id": req_id,
         "status": "pending",
         "approval_url": approval_url,
-        "poll_url": f"{request.host_url}v1/requests/{req_id}",
+        "poll_url": f"{BASE_URL}/v1/requests/{req_id}",
         "expires_minutes": expires_minutes,
     }), 201
 
@@ -248,13 +268,20 @@ def approve_page(req_id):
 def submit_decision(req_id):
     token = request.form.get("token", "")
     decision = request.form.get("decision", "")
-    comment = request.form.get("comment", "")
+    comment = request.form.get("comment", "")[:MAX_COMMENT_LEN]
     with get_db() as conn:
         row = conn.execute(
             "SELECT * FROM approval_requests WHERE id = ? AND human_token = ?",
             (req_id, token)
         ).fetchone()
         if not row or row["status"] != "pending":
+            abort(400)
+        # Enforce expiry
+        if row["expires_at"] and row["expires_at"] < datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"):
+            abort(410)
+        # Validate decision is one of the allowed options
+        allowed_options = json.loads(row["options_json"])
+        if decision not in allowed_options:
             abort(400)
         conn.execute("""
             UPDATE approval_requests
