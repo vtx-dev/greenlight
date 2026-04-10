@@ -396,6 +396,135 @@ def fire_webhook(url, req_id, decision, comment):
 # HTML Templates
 # ---------------------------------------------------------------------------
 
+BLOG_POST = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The Missing Primitive: Human-in-the-Loop for AI Agents | Greenlight</title>
+<meta name="description" content="AI agents are powerful enough to cause real damage. Here's why human-in-the-loop approval is the missing primitive, and how to add it to any agent in one API call.">
+<link rel="canonical" href="https://greenlightapi.dev/blog">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<meta property="og:title" content="The Missing Primitive: Human-in-the-Loop for AI Agents">
+<meta property="og:description" content="AI agents are powerful enough to cause real damage. Here's why human approval is the missing primitive.">
+<meta property="og:url" content="https://greenlightapi.dev/blog">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0a0a0a; color: #e8e8e8; line-height: 1.7; }
+  .container { max-width: 680px; margin: 0 auto; padding: 60px 24px 80px; }
+  .back { color: #22c55e; text-decoration: none; font-size: 0.85rem; display: inline-block; margin-bottom: 40px; }
+  .back:hover { text-decoration: underline; }
+  .tag { background: #22c55e22; color: #22c55e; border: 1px solid #22c55e44; border-radius: 4px; padding: 2px 8px; font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; }
+  h1 { font-size: 2rem; font-weight: 800; color: #fff; line-height: 1.2; margin: 16px 0 8px; }
+  .meta { color: #555; font-size: 0.85rem; margin-bottom: 40px; }
+  h2 { font-size: 1.2rem; font-weight: 700; color: #fff; margin: 40px 0 12px; }
+  p { color: #aaa; margin-bottom: 20px; }
+  strong { color: #e8e8e8; }
+  code { background: #1a1a1a; border: 1px solid #222; border-radius: 4px; padding: 1px 6px; font-family: monospace; font-size: 0.85em; color: #22c55e; }
+  pre { background: #111; border: 1px solid #222; border-radius: 10px; padding: 20px; margin: 24px 0; overflow-x: auto; font-family: monospace; font-size: 0.82rem; line-height: 1.6; color: #ccc; }
+  pre .c { color: #555; }
+  pre .s { color: #22c55e; }
+  pre .k { color: #60a5fa; }
+  blockquote { border-left: 3px solid #22c55e; padding-left: 20px; margin: 24px 0; color: #888; font-style: italic; }
+  .cta-box { background: #111; border: 1px solid #22c55e33; border-radius: 10px; padding: 28px; margin-top: 48px; text-align: center; }
+  .cta-box h3 { color: #fff; font-size: 1.1rem; margin-bottom: 8px; }
+  .cta-box p { margin-bottom: 20px; font-size: 0.9rem; }
+  .btn { display: inline-block; background: #22c55e; color: #000; padding: 12px 24px; border-radius: 8px; font-weight: 700; text-decoration: none; font-size: 0.95rem; }
+</style>
+</head>
+<body>
+<div class="container">
+  <a href="/" class="back">← greenlightapi.dev</a>
+  <span class="tag">Engineering</span>
+  <h1>The Missing Primitive: Human-in-the-Loop for AI Agents</h1>
+  <div class="meta">April 2026 · 6 min read</div>
+
+  <p>AI agents are getting good. Dangerously good. They can browse the web, write and execute code, send emails, manage files, call APIs, and coordinate with other agents — all without you in the loop.</p>
+
+  <p>That's the point. That's what makes them useful.</p>
+
+  <p>But it's also what makes them terrifying.</p>
+
+  <blockquote>At what point does an autonomous agent stop and ask: "Are you sure you want me to do this?"</blockquote>
+
+  <p>This is the question nobody building agents has fully answered. And the gap between <strong>theoretical autonomy</strong> and <strong>safe autonomy</strong> lives right here.</p>
+
+  <h2>The problem with existing solutions</h2>
+
+  <p>Every major agent framework has some version of human-in-the-loop (HITL) support. LangGraph has <code>interrupt()</code>. CrewAI has <code>human_input=True</code>. Temporal has signals. The Vercel AI SDK has <code>needsApproval</code>.</p>
+
+  <p>These are fine if you're already inside those frameworks. But they share three problems:</p>
+
+  <p><strong>1. They're framework-specific.</strong> If you're using LangGraph's interrupt, you can't easily use it in a CrewAI workflow. Custom agent loops get nothing.</p>
+
+  <p><strong>2. They handle the pause, not the notification.</strong> Knowing to stop is half the problem. You also need to actually reach a human — via email, Slack, webhook — and give them a clean UI to respond from. Every team rebuilds this from scratch.</p>
+
+  <p><strong>3. They're synchronous.</strong> Most HITL implementations block the thread. For long-running agents this is a problem — you want the agent to pause, send a notification, and then resume when a human responds, potentially hours later.</p>
+
+  <h2>What a proper HITL primitive looks like</h2>
+
+  <p>After building several agent systems, here's what I think the interface should be:</p>
+
+  <pre><span class="c"># 1. Agent decides it needs approval</span>
+response = requests.post(<span class="s">"https://greenlightapi.dev/v1/requests"</span>,
+    headers={<span class="s">"Authorization"</span>: <span class="s">"Bearer gl_..."</span>},
+    json={
+        <span class="s">"title"</span>: <span class="s">"Send campaign email to 12,000 users?"</span>,
+        <span class="s">"context"</span>: {<span class="s">"list"</span>: <span class="s">"q1-leads"</span>, <span class="s">"subject"</span>: <span class="s">"Spring sale"</span>},
+        <span class="s">"webhook_url"</span>: <span class="s">"https://yourapp.com/resume"</span>
+    }
+)
+
+<span class="c"># 2. Human gets an email, clicks approve/reject in a clean UI
+# 3. Your webhook fires with the decision — agent resumes</span>
+</pre>
+
+  <p>Three things matter here: <strong>framework-agnostic</strong> (just HTTP), <strong>async-first</strong> (webhook-based, not blocking), and <strong>human-friendly</strong> (the notification and UI are handled for you).</p>
+
+  <h2>The MCP angle</h2>
+
+  <p>If you're using Claude Code or any MCP-compatible agent, there's a better way: install Greenlight as an MCP server and the agent gets <code>request_approval</code> as a native tool — no HTTP code required.</p>
+
+  <pre><span class="c"># .claude/settings.json</span>
+{
+  <span class="k">"mcpServers"</span>: {
+    <span class="k">"greenlight"</span>: {
+      <span class="k">"command"</span>: <span class="s">"python3"</span>,
+      <span class="k">"args"</span>: [<span class="s">"/path/to/mcp_server.py"</span>],
+      <span class="k">"env"</span>: {
+        <span class="k">"GREENLIGHT_API_KEY"</span>: <span class="s">"gl_..."</span>,
+        <span class="k">"GREENLIGHT_BASE_URL"</span>: <span class="s">"https://greenlightapi.dev"</span>
+      }
+    }
+  }
+}</pre>
+
+  <p>Now Claude can say "I need approval before deploying this" and the tool handles everything — creating the request, polling for a decision, and returning the result to the agent.</p>
+
+  <h2>When should agents ask for approval?</h2>
+
+  <p>A useful heuristic: <strong>ask when the action is hard to reverse or the blast radius is large.</strong></p>
+
+  <p>Ask for approval before: sending bulk emails, deleting data, deploying to production, making purchases, posting publicly, modifying shared infrastructure, or any action affecting more than one person.</p>
+
+  <p>Don't ask for approval before: reading files, making GET requests, generating drafts, running tests, or any purely read/compute operation.</p>
+
+  <h2>The bigger picture</h2>
+
+  <p>We're in an interesting moment. Agents are capable enough to do real work but not trustworthy enough to do it unsupervised. HITL is the bridge — it's how you get the productivity benefits of autonomy while maintaining the oversight that makes autonomy safe.</p>
+
+  <p>The goal isn't to keep humans in the loop forever. It's to build trust incrementally. Each approved action is a data point. Over time, you can automate the approvals for actions that always get approved, and keep humans in the loop only for the genuinely risky ones.</p>
+
+  <div class="cta-box">
+    <h3>Add HITL to your agent in 5 minutes</h3>
+    <p>Free tier: 10 approval requests/month. No credit card required.</p>
+    <a href="/" class="btn">Get your free API key →</a>
+  </div>
+</div>
+</body>
+</html>
+"""
+
 LANDING_PAGE = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -622,6 +751,11 @@ THANKS_PAGE = """<!DOCTYPE html>
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+
+@app.route("/blog")
+def blog():
+    return render_template_string(BLOG_POST)
+
 
 @app.route("/favicon.ico")
 @app.route("/favicon.png")
