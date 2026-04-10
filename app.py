@@ -493,7 +493,8 @@ response = requests.post(<span class="s">"https://greenlightapi.dev/v1/requests"
     headers={<span class="s">"Authorization"</span>: <span class="s">"Bearer gl_..."</span>},
     json={
         <span class="s">"title"</span>: <span class="s">"Deploy new model to production?"</span>,
-        <span class="s">"context"</span>: {<span class="s">"list"</span>: <span class="s">"q1-leads"</span>, <span class="s">"subject"</span>: <span class="s">"Spring sale"</span>},
+        <span class="s">"notify_telegram"</span>: <span class="s">"your_chat_id"</span>,
+        <span class="s">"context"</span>: {<span class="s">"environment"</span>: <span class="s">"prod"</span>, <span class="s">"version"</span>: <span class="s">"2.1.0"</span>},
         <span class="s">"webhook_url"</span>: <span class="s">"https://yourapp.com/resume"</span>
     }
 )
