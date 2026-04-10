@@ -9,18 +9,43 @@ import json
 import secrets
 import hashlib
 import hmac
-import smtplib
 import threading
 import time
+import urllib.request
 from datetime import datetime, timezone
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 from functools import wraps
 from flask import Flask, request, jsonify, render_template_string, abort, redirect, send_from_directory
 
 app = Flask(__name__)
 DB_PATH = "greenlight.db"
 BASE_URL = os.environ.get("BASE_URL", "https://greenlightapi.dev")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "6878450536")
+
+
+def _fetch_secret(secret_id: str) -> str:
+    """Fetch a secret from GCP Secret Manager. Returns '' on failure."""
+    try:
+        import urllib.request as _ur
+        import subprocess
+        tok = subprocess.check_output(
+            ["gcloud", "auth", "application-default", "print-access-token"],
+            stderr=subprocess.DEVNULL
+        ).decode().strip()
+        req = _ur.Request(
+            f"https://secretmanager.googleapis.com/v1/projects/ontimeteetimes/secrets/{secret_id}/versions/latest:access",
+            headers={"Authorization": f"Bearer {tok}"},
+        )
+        with _ur.urlopen(req, timeout=5) as r:
+            import base64
+            d = json.loads(r.read())
+            return base64.b64decode(d["payload"]["data"]).decode().strip()
+    except Exception as e:
+        print(f"[Greenlight] Could not fetch secret {secret_id}: {e}")
+        return ""
+
+
+# Load bot token once at startup (not per-request)
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN") or _fetch_secret("vtx-telegram-token")
 
 # Simple in-memory rate limit for key registration: {ip: [timestamps]}
 _reg_attempts: dict = {}
@@ -185,13 +210,16 @@ def create_request():
         )
 
     approval_url = f"{BASE_URL}/approve/{req_id}?token={human_token}"
+    desc = data.get("description") or ""
 
-    # Fire notification in background
-    threading.Thread(
-        target=send_notification,
-        args=(row["email"], title, approval_url, data.get("description") or ""),
-        daemon=True
-    ).start()
+    # Notify via Telegram (caller can pass notify_telegram chat_id, falls back to configured default)
+    notify_telegram = str(data.get("notify_telegram") or TELEGRAM_CHAT_ID).strip()
+    if notify_telegram:
+        threading.Thread(
+            target=send_telegram_notification,
+            args=(notify_telegram, title, approval_url, desc),
+            daemon=True
+        ).start()
 
     return jsonify({
         "id": req_id,
@@ -306,44 +334,39 @@ def submit_decision(req_id):
 # Notifications & Webhooks
 # ---------------------------------------------------------------------------
 
-def send_notification(to_email, title, approval_url, description):
-    """Best-effort email notification (configure SMTP via env or skip)."""
-    import os
-    smtp_host = os.environ.get("SMTP_HOST")
-    if not smtp_host:
-        print(f"[Greenlight] No SMTP configured. Approval URL: {approval_url}")
+def send_telegram_notification(chat_id, title, approval_url, description):
+    """Send approval notification via Telegram bot."""
+    token = TELEGRAM_BOT_TOKEN
+    if not token:
         return
+    short_desc = (description[:300] + "…") if len(description) > 300 else description
+    text = (
+        f"🟢 *Approval needed*\n\n"
+        f"*{title}*\n"
+        + (f"\n{short_desc}\n" if short_desc else "")
+        + f"\n[Review & Decide]({approval_url})"
+    )
     try:
-        smtp_port = int(os.environ.get("SMTP_PORT", 587))
-        smtp_user = os.environ.get("SMTP_USER", "")
-        smtp_pass = os.environ.get("SMTP_PASS", "")
-        from_email = os.environ.get("FROM_EMAIL", smtp_user)
-
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = f"[Greenlight] Action Required: {title}"
-        msg["From"] = from_email
-        msg["To"] = to_email
-
-        body = f"""
-An AI agent is requesting your approval before proceeding.
-
-Title: {title}
-{f'Description: {description}' if description else ''}
-
-Click here to approve or reject:
-{approval_url}
-
-This request may expire. Please respond promptly.
-        """.strip()
-
-        msg.attach(MIMEText(body, "plain"))
-        with smtplib.SMTP(smtp_host, smtp_port) as server:
-            server.starttls()
-            if smtp_user:
-                server.login(smtp_user, smtp_pass)
-            server.sendmail(from_email, to_email, msg.as_string())
+        payload = json.dumps({
+            "chat_id": chat_id,
+            "text": text,
+            "parse_mode": "Markdown",
+            "disable_web_page_preview": False,
+        }).encode()
+        req = urllib.request.Request(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=10) as r:
+            result = json.loads(r.read())
+        if result.get("ok"):
+            print(f"[Greenlight] Telegram notification sent to {chat_id}")
+        else:
+            print(f"[Greenlight] Telegram error: {result}")
     except Exception as e:
-        print(f"[Greenlight] Email failed: {e}")
+        print(f"[Greenlight] Telegram failed ({e}). Approval URL: {approval_url}")
 
 
 def _is_safe_webhook_url(url: str) -> bool:
@@ -457,7 +480,7 @@ BLOG_POST = """<!DOCTYPE html>
 
   <p><strong>1. They're framework-specific.</strong> If you're using LangGraph's interrupt, you can't easily use it in a CrewAI workflow. Custom agent loops get nothing.</p>
 
-  <p><strong>2. They handle the pause, not the notification.</strong> Knowing to stop is half the problem. You also need to actually reach a human — via email, Slack, webhook — and give them a clean UI to respond from. Every team rebuilds this from scratch.</p>
+  <p><strong>2. They handle the pause, not the notification.</strong> Knowing to stop is half the problem. You also need to actually reach a human — via Telegram, webhook, or other channel — and give them a clean UI to respond from. Every team rebuilds this from scratch.</p>
 
   <p><strong>3. They're synchronous.</strong> Most HITL implementations block the thread. For long-running agents this is a problem — you want the agent to pause, send a notification, and then resume when a human responds, potentially hours later.</p>
 
@@ -469,13 +492,13 @@ BLOG_POST = """<!DOCTYPE html>
 response = requests.post(<span class="s">"https://greenlightapi.dev/v1/requests"</span>,
     headers={<span class="s">"Authorization"</span>: <span class="s">"Bearer gl_..."</span>},
     json={
-        <span class="s">"title"</span>: <span class="s">"Send campaign email to 12,000 users?"</span>,
+        <span class="s">"title"</span>: <span class="s">"Deploy new model to production?"</span>,
         <span class="s">"context"</span>: {<span class="s">"list"</span>: <span class="s">"q1-leads"</span>, <span class="s">"subject"</span>: <span class="s">"Spring sale"</span>},
         <span class="s">"webhook_url"</span>: <span class="s">"https://yourapp.com/resume"</span>
     }
 )
 
-<span class="c"># 2. Human gets an email, clicks approve/reject in a clean UI
+<span class="c"># 2. Human gets a Telegram message, taps approve/reject in a clean UI</span>
 # 3. Your webhook fires with the decision — agent resumes</span>
 </pre>
 
@@ -588,7 +611,7 @@ LANDING_PAGE = """<!DOCTYPE html>
   <h2>How it works</h2>
   <div class="cards">
     <div class="card"><h3>1. Agent calls API</h3><p>Your agent POSTs an approval request with a title, description, and context.</p></div>
-    <div class="card"><h3>2. Human gets notified</h3><p>The approver receives an email (or webhook) with a one-click decision UI.</p></div>
+    <div class="card"><h3>2. Human gets notified</h3><p>The approver receives a Telegram message instantly with a one-tap decision UI. Webhook callbacks also supported.</p></div>
     <div class="card"><h3>3. Agent gets decision</h3><p>Agent polls the request or receives a webhook callback with approve/reject + comment.</p></div>
   </div>
 </div>
@@ -606,8 +629,8 @@ curl -X POST /v1/requests \\
   -H "Authorization: Bearer <span class="key">gl_your_key</span>" \\
   -H "Content-Type: application/json" \\
   -d '{
-    <span class="key">"title"</span>: <span class="val">"Send weekly report email to 5,000 users?"</span>,
-    <span class="key">"description"</span>: <span class="val">"The agent has drafted the email. Approve to send."</span>,
+    <span class="key">"title"</span>: <span class="val">"Deploy hotfix to production?"</span>,
+    <span class="key">"description"</span>: <span class="val">"The agent has tested the fix. Approve to deploy."</span>,
     <span class="key">"context"</span>: {"recipient_count": 5000, "subject": "Q1 Report"},
     <span class="key">"webhook_url"</span>: <span class="val">"https://yourapp.com/webhook"</span>
   }'
@@ -624,12 +647,12 @@ curl /v1/requests/<span class="key">{id}</span> \\
     <div class="plan">
       <h3>Free</h3>
       <div class="price">$0</div>
-      <ul><li>10 requests/month</li><li>Email notifications</li><li>Webhook callbacks</li><li>48hr retention</li></ul>
+      <ul><li>10 requests/month</li><li>Telegram notifications</li><li>Webhook callbacks</li><li>48hr retention</li></ul>
     </div>
     <div class="plan featured">
       <h3>Starter</h3>
       <div class="price">$9/mo</div>
-      <ul><li>500 requests/month</li><li>Email + Slack notifications</li><li>Webhook callbacks</li><li>30-day retention</li><li>Custom options</li></ul>
+      <ul><li>500 requests/month</li><li>Telegram notifications</li><li>Webhook callbacks</li><li>30-day retention</li><li>Custom options</li></ul>
     </div>
     <div class="plan">
       <h3>Pro</h3>
