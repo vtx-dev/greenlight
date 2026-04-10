@@ -542,6 +542,22 @@ THANKS_PAGE = """<!DOCTYPE html>
 # Entry point
 # ---------------------------------------------------------------------------
 
+@app.route("/sitemap.xml")
+def sitemap():
+    xml = '''<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://greenlightapi.dev/</loc><changefreq>weekly</changefreq><priority>1.0</priority></url>
+</urlset>'''
+    return xml, 200, {'Content-Type': 'application/xml'}
+
+@app.route("/robots.txt")
+def robots():
+    return "User-agent: *\nAllow: /\nSitemap: https://greenlightapi.dev/sitemap.xml\n", 200, {'Content-Type': 'text/plain'}
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
 if __name__ == "__main__":
     init_db()
     port = int(os.environ.get("PORT", 5000))
