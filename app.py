@@ -21,6 +21,9 @@ from flask import Flask, request, jsonify, render_template_string, abort, redire
 app = Flask(__name__)
 DB_PATH = "greenlight.db"
 
+# Simple in-memory rate limit for key registration: {ip: [timestamps]}
+_reg_attempts: dict = {}
+
 # ---------------------------------------------------------------------------
 # Database
 # ---------------------------------------------------------------------------
@@ -97,6 +100,15 @@ def index():
 @app.route("/v1/keys", methods=["POST"])
 def create_key():
     """Register a new API key (free tier)."""
+    # Rate limit: max 3 registrations per IP per hour
+    ip = request.remote_addr or "unknown"
+    now = time.time()
+    attempts = [t for t in _reg_attempts.get(ip, []) if now - t < 3600]
+    if len(attempts) >= 3:
+        return jsonify({"error": "Too many registrations from this IP. Try again later."}), 429
+    attempts.append(now)
+    _reg_attempts[ip] = attempts
+
     data = request.get_json(force=True)
     name = (data.get("name") or "").strip()
     email = (data.get("email") or "").strip()
@@ -307,8 +319,34 @@ This request may expire. Please respond promptly.
         print(f"[Greenlight] Email failed: {e}")
 
 
+def _is_safe_webhook_url(url: str) -> bool:
+    """Block SSRF: only allow public HTTPS URLs, reject private/metadata IPs."""
+    import urllib.parse, ipaddress
+    try:
+        p = urllib.parse.urlparse(url)
+        if p.scheme not in ("https", "http"):
+            return False
+        host = p.hostname or ""
+        # Block GCP/AWS/Azure metadata endpoints and private ranges
+        blocked_hosts = {"169.254.169.254", "metadata.google.internal", "metadata.internal"}
+        if host in blocked_hosts:
+            return False
+        try:
+            addr = ipaddress.ip_address(host)
+            if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
+                return False
+        except ValueError:
+            pass  # hostname, not an IP — allow DNS resolution
+        return True
+    except Exception:
+        return False
+
+
 def fire_webhook(url, req_id, decision, comment):
     import urllib.request, urllib.error
+    if not _is_safe_webhook_url(url):
+        print(f"[Greenlight] Webhook blocked (unsafe URL): {url}")
+        return
     payload = json.dumps({
         "id": req_id,
         "status": "decided",
@@ -561,5 +599,5 @@ def robots():
 if __name__ == "__main__":
     init_db()
     port = int(os.environ.get("PORT", 5000))
-    print(f"🟢 Greenlight running on http://0.0.0.0:{port}")
-    app.run(host="0.0.0.0", port=port, debug=False)
+    print(f"🟢 Greenlight running on http://127.0.0.1:{port}")
+    app.run(host="127.0.0.1", port=port, debug=False)
