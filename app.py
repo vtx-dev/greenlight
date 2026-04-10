@@ -648,7 +648,7 @@ curl /v1/requests/<span class="key">{id}</span> \\
     <div class="plan">
       <h3>Free</h3>
       <div class="price">$0</div>
-      <ul><li>10 requests/month</li><li>Telegram notifications</li><li>Webhook callbacks</li><li>48hr retention</li></ul>
+      <ul><li>10 requests/month</li><li>Telegram notifications</li><li>Webhook callbacks</li><li>7-day retention</li></ul>
     </div>
     <div class="plan featured">
       <h3>Starter</h3>
